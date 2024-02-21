@@ -1,8 +1,7 @@
-
-
 # Importing necessary libraries
 import numpy as np
 import os
+
 
 # Function to check if a player has won or not
 def check_sequence(sequence: np.ndarray):
@@ -13,6 +12,7 @@ def check_sequence(sequence: np.ndarray):
     if np.all(sequence == 1) or np.all(sequence == 2):
         return True, 1 if np.all(sequence == 1) else 2
     return False, 0
+
 
 # Class to represent the game board and its functionality
 class TicTacToe:
