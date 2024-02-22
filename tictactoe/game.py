@@ -15,7 +15,7 @@ def check_sequence(sequence: np.ndarray):
 
 
 # Class to represent the game board and its functionality
-class TicTacToe:
+class TicTacToeBETA:
     """
     This class represents a Tic-Tac-Toe game board with rows and columns set to 3.
     It initializes an empty board and provides methods to interact with the board such as playing a move, checking if anyone has won or if the board is full.
@@ -89,7 +89,7 @@ class TicTacToe:
 
 
 # Game initialization and loop for playing the game
-game = TicTacToe()
+game = TicTacToeBETA()
 while True:
     # Displaying the current state of the game board to the player
     rows, cols = game.get_board().shape
