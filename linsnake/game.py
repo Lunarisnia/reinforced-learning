@@ -81,6 +81,7 @@ class LinSnake:
         self.player_pos = np.clip((self.road_length - 1) // 2, 0, self.road_length - 1)
         self.food_location = 0
         self.step = 0
+        self.spread_food()
 
 
 # game = LinSnake(goal=3)
