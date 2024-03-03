@@ -5,16 +5,16 @@ from torch.nn import functional as F
 
 # Hyperparameters
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-batch_size = 16  # how many independent sequences will we process in parallel?
-block_size = 32  # what is the maximum context length of predictions?
+batch_size = 64  # how many independent sequences will we process in parallel?
+block_size = 256  # what is the maximum context length of predictions?
 max_iters = 5000
 eval_interval = 100
 eval_iters = 200
-learning_rate = 1e-3
-n_embd = 64
-n_heads = 4
-n_layer = 4
-dropout = 0.0
+learning_rate = 3e-4
+n_embd = 384
+n_heads = 6
+n_layer = 6
+dropout = 0.2
 # ====== End Of Hyperparameters ======
 
 torch.manual_seed(1337)
@@ -73,6 +73,7 @@ class Head(nn.Module):
         self.key = nn.Linear(n_embd, head_size, bias=False)
         self.value = nn.Linear(n_embd, head_size, bias=False)
         self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
         B, T, C = x.shape
@@ -87,6 +88,7 @@ class Head(nn.Module):
         wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
         # normalize it to every column sums up to 1
         wei = F.softmax(wei, dim=-1)
+        wei = self.dropout(wei)
         # multiply the weight to the value
         out = wei @ v  # (B, T, T) @ (B, T, hs) = (B, T, hs)
 
@@ -215,3 +217,5 @@ for iter in range(max_iters):
 # generate from the model
 context = torch.zeros((1, 1), dtype=torch.long, device=device)
 print(decode(model.generate(context, max_new_tokens=2000)[0].tolist()))
+
+torch.save(model.state_dict(), "./gptv1.pth")
