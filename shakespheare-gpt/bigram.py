@@ -8,10 +8,13 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 batch_size = 16  # how many independent sequences will we process in parallel?
 block_size = 32  # what is the maximum context length of predictions?
 max_iters = 5000
-eval_interval = 500
+eval_interval = 100
 eval_iters = 200
 learning_rate = 1e-3
-n_embd = 32
+n_embd = 64
+n_heads = 4
+n_layer = 4
+dropout = 0.0
 # ====== End Of Hyperparameters ======
 
 torch.manual_seed(1337)
@@ -83,7 +86,7 @@ class Head(nn.Module):
         # mask the weight so it can't communicate to the future since this is a decoder block
         wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
         # normalize it to every column sums up to 1
-        wei = F.softmax(wei, dim=1)
+        wei = F.softmax(wei, dim=-1)
         # multiply the weight to the value
         out = wei @ v  # (B, T, T) @ (B, T, hs) = (B, T, hs)
 
@@ -91,12 +94,59 @@ class Head(nn.Module):
         return out
 
 
+class MultiHeadAttention(nn.Module):
+    def __init__(self, num_heads, head_size):
+        super().__init__()
+        self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
+        self.projection = nn.Linear(n_embd, n_embd)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        out = torch.cat([h(x) for h in self.heads], dim=-1)
+        out = self.dropout(self.projection(out))
+        return out
+
+
+class FeedForward(nn.Module):
+    def __init__(self, n_embd):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(n_embd, 4 * n_embd),
+            nn.ReLU(),
+            nn.Linear(4 * n_embd, n_embd),
+            nn.Dropout(dropout)
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+
+class Block(nn.Module):
+
+    def __init__(self, n_embd, n_head):
+        super().__init__()
+        head_size = n_embd // n_head
+        self.attention_heads = MultiHeadAttention(n_head,
+                                                  head_size)  # since we have a lot of heads now split the work evenly
+        self.ffn = FeedForward(n_embd)
+        self.ln_1 = nn.LayerNorm(n_embd)
+        self.ln_2 = nn.LayerNorm(n_embd)
+
+    def forward(self, x):
+        # Communication
+        x = x + self.attention_heads(self.ln_1(x))  # apply one head of self attention. (B, T, C)
+        # Calculation
+        x = x + self.ffn(self.ln_2(x))
+        return x
+
+
 class BigramLanguageModel(nn.Module):
     def __init__(self):
         super().__init__()
         self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
         self.position_embedding_table = nn.Embedding(block_size, n_embd)
-        self.self_attention_head = Head(n_embd)
+        self.blocks = nn.Sequential(*[Block(n_embd, n_heads) for _ in range(n_layer)])
+        self.final_ln = nn.LayerNorm(n_embd)
         self.lm_head = nn.Linear(n_embd, vocab_size)
 
     def forward(self, idx, targets=None):
@@ -105,7 +155,8 @@ class BigramLanguageModel(nn.Module):
         token_embedding = self.token_embedding_table(idx)  # (B, T, C)
         position_embedding = self.position_embedding_table(torch.arange(T, device=device))  # (T, C)
         x = token_embedding + position_embedding  # (B, T, C)
-        x = self.self_attention_head(x)  # apply one head of self attention. (B, T, C)
+        x = self.blocks(x)
+        x = self.final_ln(x)
         logits = self.lm_head(x)  # (B, T, vocab_size)
 
         if targets is None:
