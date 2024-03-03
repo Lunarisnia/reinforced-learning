@@ -1,14 +1,16 @@
+import math
 import torch
 from torch import nn
 from torch.nn import functional as F
 
 # Hyperparameters
-batch_size = 16 # how many independent sequences will we process in parallel?
-block_size = 32 # what is the maximum context length of predictions?
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
+batch_size = 16  # how many independent sequences will we process in parallel?
+block_size = 32  # what is the maximum context length of predictions?
 max_iters = 5000
-eval_interval = 100
+eval_interval = 500
 eval_iters = 200
+learning_rate = 1e-3
 n_embd = 32
 # ====== End Of Hyperparameters ======
 
@@ -44,11 +46,12 @@ def get_batch(split):
     contexts, targets = contexts.to(device), targets.to(device)
     return contexts, targets
 
+
 # torch.no_grad tells pytorch to not prepare for backpropagation since we don't train anything here
 @torch.no_grad()
 def estimate_loss():
     out = {}
-    model.eval() # Set the mode to evaluation mode
+    model.eval()  # Set the mode to evaluation mode
     for split in ['train', 'val']:
         losses = torch.zeros(eval_iters)
         for k in range(eval_iters):
@@ -56,8 +59,36 @@ def estimate_loss():
             logits, loss = model(X, Y)
             losses[k] = loss.item()
         out[split] = losses.mean()
-    model.train() # Set it back to training mode
+    model.train()  # Set it back to training mode
     return out
+
+
+class Head(nn.Module):
+    def __init__(self, head_size):
+        super().__init__()
+        self.query = nn.Linear(n_embd, head_size, bias=False)
+        self.key = nn.Linear(n_embd, head_size, bias=False)
+        self.value = nn.Linear(n_embd, head_size, bias=False)
+        self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
+
+    def forward(self, x):
+        B, T, C = x.shape
+        # Produce a query, key, value by passing it through a linear layer
+        q = self.query(x)  # (B, T, hs)
+        k = self.key(x)  # (B, T, hs)
+        v = self.value(x)  # (B, T, hs)
+
+        # do the scaled attention formula refer to attention is all you need paper
+        wei = q @ k.transpose(-2, -1) * (1 / math.sqrt(C))  # (B, T, hs) @ (B, hs, T) = (B, T, T) * (1 / sqrt(C)
+        # mask the weight so it can't communicate to the future since this is a decoder block
+        wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
+        # normalize it to every column sums up to 1
+        wei = F.softmax(wei, dim=1)
+        # multiply the weight to the value
+        out = wei @ v  # (B, T, T) @ (B, T, hs) = (B, T, hs)
+
+        # return the result
+        return out
 
 
 class BigramLanguageModel(nn.Module):
@@ -65,14 +96,17 @@ class BigramLanguageModel(nn.Module):
         super().__init__()
         self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
         self.position_embedding_table = nn.Embedding(block_size, n_embd)
+        self.self_attention_head = Head(n_embd)
         self.lm_head = nn.Linear(n_embd, vocab_size)
 
     def forward(self, idx, targets=None):
         B, T = idx.shape
         # idx and targets are both (B, T) Tensor of integers
         token_embedding = self.token_embedding_table(idx)  # (B, T, C)
-        position_embedding = self.position_embedding_table(torch.arange(T, device=device))
-        logits = self.lm_head(token_embedding) # (B, T, vocab_size)
+        position_embedding = self.position_embedding_table(torch.arange(T, device=device))  # (T, C)
+        x = token_embedding + position_embedding  # (B, T, C)
+        x = self.self_attention_head(x)  # apply one head of self attention. (B, T, C)
+        logits = self.lm_head(x)  # (B, T, vocab_size)
 
         if targets is None:
             loss = None
@@ -87,8 +121,11 @@ class BigramLanguageModel(nn.Module):
     def generate(self, idx, max_new_tokens):
         # idx is (B, T) array of indices in the current context
         for _ in range(max_new_tokens):
+            # crop idx to the last block_size tokens
+            idx_cond = idx[:,
+                       -block_size:]  # will always show last -block_size item so -1 will always be the next predicted
             # get the predictions
-            logits, loss = self(idx)
+            logits, loss = self(idx_cond)
             # focus only on the last time step
             logits = logits[:, -1, :]  # becomes (B, C)
             # apply softmax to get probabilities
@@ -103,12 +140,11 @@ class BigramLanguageModel(nn.Module):
 # xb, yb = get_batch("train")
 model = BigramLanguageModel()
 model = model.to(device)
-# logits, loss = model(xb, yb)
 # print the number of parameters in the model
-print(sum(p.numel() for p in model.parameters())/1e6, 'M parameters')
+print(sum(p.numel() for p in model.parameters()) / 1e6, 'M parameters')
 
 # Pytorch Optimizer
-optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
 
 # Training Loops
 for iter in range(max_iters):
