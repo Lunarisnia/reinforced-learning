@@ -218,4 +218,4 @@ for iter in range(max_iters):
 context = torch.zeros((1, 1), dtype=torch.long, device=device)
 print(decode(model.generate(context, max_new_tokens=2000)[0].tolist()))
 
-torch.save(model.state_dict(), "./gptv1.pth")
+torch.save(model.state_dict(), "./quotesgptv1.pth")
